@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coding Agent</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Top bar -->
+      <header id="topbar">
+        <div class="topbar-left">
+          <span class="logo">⌘ agent</span>
+          <button id="project-dir" class="project-btn" title="click to change project">
+            no project — click to choose
+          </button>
+        </div>
+        <div class="topbar-right">
+          <span id="model-name" class="pill">…</span>
+          <span id="cost" class="pill" title="estimated session cost">$0.0000</span>
+          <span class="serena-status">
+            <span id="serena-dot" class="dot dot-unknown"></span>
+            <span id="serena-label" class="muted">serena</span>
+          </span>
+        </div>
+      </header>
+
+      <div id="body">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+          <button id="new-chat" class="side-btn primary">+ New chat</button>
+          <div class="side-actions">
+            <button id="reset-chat" class="side-btn">Reset</button>
+            <button id="show-tools" class="side-btn">Tools</button>
+          </div>
+          <div class="sidebar-label">Chats</div>
+          <ul id="session-list"></ul>
+          <div class="sidebar-label">
+            Recents
+            <button id="refresh-recents" class="mini-btn" title="refresh">⟳</button>
+          </div>
+          <ul id="recents-list">
+            <li class="recents-empty muted">loading…</li>
+          </ul>
+        </aside>
+
+        <!-- Main -->
+        <main id="main">
+          <div id="transcript"></div>
+          <div id="composer">
+            <div id="run-indicator" class="hidden">
+              <span class="spinner"></span>
+              <span id="run-text">running…</span>
+              <button id="interrupt" class="interrupt-btn">Interrupt</button>
+            </div>
+            <div id="attachments" class="attachments hidden"></div>
+            <div class="input-row">
+              <textarea
+                id="input"
+                placeholder="Ask the agent to do something…  (Enter to send, Shift+Enter for newline; paste an image to attach)"
+                rows="1"
+              ></textarea>
+              <button id="send" class="send-btn">Send</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Project picker modal -->
+    <div id="project-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>Select a project</h2>
+          <button id="close-project" class="icon-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">
+            Absolute path to the project the agent should work on. Serena activates it;
+            <code>bash</code> and <code>git_checkpoint</code> run there.
+          </p>
+          <input id="project-input" class="path-input" placeholder="C:\path\to\project" />
+          <div id="project-msg" class="muted" style="margin-top: 8px"></div>
+          <div style="margin-top: 12px">
+            <button id="project-submit" class="send-btn">Use project</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools modal -->
+    <div id="tools-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>Available tools</h2>
+          <button id="close-tools" class="icon-btn">✕</button>
+        </div>
+        <div id="tools-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+# Uses your Claude Code subscription login via the Agent SDK (no API key).
+# Requires the `claude` CLI to be installed and logged in (claude /login).
+claude-agent-sdk>=0.2.95
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0

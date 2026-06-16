@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local app state / machine-specific (do not publish)
+.last_project
+.serena/
+.claude/
+*.log
+server.pid
+
+# OS
+.DS_Store
+Thumbs.db
