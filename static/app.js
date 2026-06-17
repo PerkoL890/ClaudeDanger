@@ -123,6 +123,7 @@ function addAsk(sess, id, questions) {
   a.parts.push({
     kind: "ask",
     id,
+    sid: sess.id, // owning chat, so the answer goes back to the right session
     questions: questions || [],
     draft: {}, // qIndex -> { selected: string[], other: string }
     answered: false,
@@ -445,7 +446,8 @@ function renderAskCard(part) {
 
 function answerAsk(part, skipped) {
   if (part.answered || !wsReady) return;
-  const sess = current();
+  // Answer the chat that asked, not whatever chat happens to be on screen.
+  const sess = sessions.get(part.sid) || current();
   if (!sess) return;
 
   let answers = null;
@@ -617,8 +619,9 @@ function handle(msg) {
     return;
   }
 
-  // All turn events apply to the session that is currently running.
-  const sess = sessions.get(runningId);
+  // Route each turn event to the chat it belongs to (the backend stamps every
+  // event with session_id). Falling back to runningId keeps older events safe.
+  const sess = sessions.get(msg.session_id) || sessions.get(runningId);
   if (!sess) return;
 
   switch (msg.type) {

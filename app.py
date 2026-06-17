@@ -242,7 +242,14 @@ def make_ask_user(session: "Session"):
         session.pending_questions[qid] = fut
         try:
             await ws.send_text(
-                json.dumps({"type": "ask_question", "id": qid, "questions": questions})
+                json.dumps(
+                    {
+                        "type": "ask_question",
+                        "session_id": session.sid,
+                        "id": qid,
+                        "questions": questions,
+                    }
+                )
             )
         except Exception as exc:  # noqa: BLE001
             session.pending_questions.pop(qid, None)
@@ -254,7 +261,11 @@ def make_ask_user(session: "Session"):
             answers = await fut  # resolved by the 'ask_response' WS handler
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
-                await ws.send_text(json.dumps({"type": "ask_cancel", "id": qid}))
+                await ws.send_text(
+                    json.dumps(
+                        {"type": "ask_cancel", "session_id": session.sid, "id": qid}
+                    )
+                )
             raise
         finally:
             session.pending_questions.pop(qid, None)
@@ -353,6 +364,10 @@ def build_options(
         permission_mode="default",  # routes through can_use_tool
         can_use_tool=can_use_tool,
         allowed_tools=ALLOWED_TOOLS,
+        # Disable Claude Code's built-in AskUserQuestion: it isn't wired to our
+        # GUI and just returns "the user did not answer", so force the model to
+        # use our custom mcp__local__ask_user tool instead.
+        disallowed_tools=["AskUserQuestion"],
         mcp_servers={"serena": serena_mcp_config(project), "local": local_server},
         include_partial_messages=True,
         setting_sources=[],  # don't inherit the user's ~/.claude project settings
@@ -545,6 +560,9 @@ async def run_turn(
     ws: WebSocket, session: Session, user_text: str, images: list[dict[str, str]] | None = None
 ) -> None:
     async def send(payload: dict[str, Any]) -> None:
+        # Stamp every turn event with its chat id so the frontend can demux
+        # concurrent chats instead of routing by a single global "running" id.
+        payload.setdefault("session_id", session.sid)
         await ws.send_text(json.dumps(payload))
 
     session.ws = ws  # ensure ask_user routes to this turn's socket
