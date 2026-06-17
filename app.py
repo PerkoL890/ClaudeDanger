@@ -35,6 +35,7 @@ import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import uvicorn
 from claude_agent_sdk import (
@@ -95,7 +96,11 @@ def build_system_prompt(project: Path | None) -> str:
         "code tools (prefer these for code work -- symbol search, references, "
         "structured edits), the built-in bash tool, and a git_checkpoint tool. "
         "Execute tasks directly with tools instead of asking the user to run "
-        "things. Be concise in prose; let the tool calls show the work."
+        "things. Be concise in prose; let the tool calls show the work. "
+        "When a request is genuinely ambiguous or hinges on a decision only the "
+        "user can make, call the ask_user tool to ask a focused multiple-choice "
+        "question rather than guessing or doing free-form Q&A in prose. Don't "
+        "overuse it for things you can determine yourself from the code."
     )
 
 
@@ -148,6 +153,117 @@ def make_git_checkpoint(project: Path):
 
 
 # --------------------------------------------------------------------------
+# Custom in-process tool: ask_user (Claude -> GUI question -> answer)
+# --------------------------------------------------------------------------
+
+# JSON Schema for ask_user. Mirrors Claude Code's AskUserQuestion shape so the
+# model already knows how to drive it: a list of multiple-choice questions, each
+# with a short header chip, the question text, options (label + description), and
+# whether multiple options may be selected.
+ASK_USER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "description": "One or more questions to ask the user.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The question to ask."},
+                    "header": {
+                        "type": "string",
+                        "description": "Very short label/topic for the question (a few words).",
+                    },
+                    "multiSelect": {
+                        "type": "boolean",
+                        "description": "If true, the user may pick more than one option.",
+                    },
+                    "options": {
+                        "type": "array",
+                        "description": "The choices to offer.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Short option text."},
+                                "description": {
+                                    "type": "string",
+                                    "description": "Optional longer explanation of the option.",
+                                },
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                },
+                "required": ["question", "options"],
+            },
+        }
+    },
+    "required": ["questions"],
+}
+
+
+def _format_answers(answers: list[dict[str, Any]] | None) -> str:
+    if not answers:
+        return "The user did not answer the questions."
+    lines: list[str] = []
+    for a in answers:
+        q = a.get("question") or a.get("header") or "question"
+        sel = a.get("answer")
+        if isinstance(sel, str):
+            sel = [sel]
+        sel = [str(x) for x in (sel or [])]
+        lines.append(f"Q: {q}\nA: {', '.join(sel) if sel else '(no selection)'}")
+    return "\n\n".join(lines)
+
+
+def make_ask_user(session: "Session"):
+    """Build an ask_user tool bound to a chat session, so the question is routed
+    to that session's WebSocket and the answer comes back on the same socket."""
+
+    @tool(
+        "ask_user",
+        "Ask the user one or more multiple-choice questions and wait for their "
+        "answer. Use when you need a decision or clarification before proceeding "
+        "(e.g. narrowing an ambiguous request). Returns the user's selections, "
+        "or notes that they skipped.",
+        ASK_USER_SCHEMA,
+    )
+    async def ask_user(args: dict[str, Any]) -> dict[str, Any]:
+        questions = args.get("questions") or []
+        ws = session.ws
+        if ws is None:
+            return {
+                "content": [{"type": "text", "text": "No UI is connected to ask the user."}],
+                "isError": True,
+            }
+        qid = uuid4().hex
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        session.pending_questions[qid] = fut
+        try:
+            await ws.send_text(
+                json.dumps({"type": "ask_question", "id": qid, "questions": questions})
+            )
+        except Exception as exc:  # noqa: BLE001
+            session.pending_questions.pop(qid, None)
+            return {
+                "content": [{"type": "text", "text": f"Failed to deliver question: {exc}"}],
+                "isError": True,
+            }
+        try:
+            answers = await fut  # resolved by the 'ask_response' WS handler
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await ws.send_text(json.dumps({"type": "ask_cancel", "id": qid}))
+            raise
+        finally:
+            session.pending_questions.pop(qid, None)
+        return {"content": [{"type": "text", "text": _format_answers(answers)}]}
+
+    return ask_user
+
+
+# --------------------------------------------------------------------------
 # Permission callback -- the entire permission layer
 # --------------------------------------------------------------------------
 
@@ -176,6 +292,8 @@ class Session:
     cost: float = 0.0
     interrupting: bool = False
     resume_id: str | None = None  # resume this Claude session on first message
+    ws: WebSocket | None = None  # current socket, so ask_user can reach the GUI
+    pending_questions: dict[str, asyncio.Future] = field(default_factory=dict)
 
 
 @dataclass
@@ -221,9 +339,13 @@ def serena_mcp_config(project: Path) -> dict[str, Any]:
 
 
 def build_options(
-    project: Path, resume: str | None = None, fork: bool = True
+    session: "Session", resume: str | None = None, fork: bool = True
 ) -> ClaudeAgentOptions:
-    local_server = create_sdk_mcp_server("local", "1.0.0", [make_git_checkpoint(project)])
+    project = session.project
+    assert project is not None  # callers guarantee a project is set
+    local_server = create_sdk_mcp_server(
+        "local", "1.0.0", [make_git_checkpoint(project), make_ask_user(session)]
+    )
     opts = ClaudeAgentOptions(
         system_prompt=build_system_prompt(project),
         model=ctx.args.model,  # None -> subscription default
@@ -252,7 +374,7 @@ async def get_or_create_client(session: Session) -> ClaudeSDKClient | None:
     ctx.resume_id = None  # one-shot
     session.resume_id = None
     client = ClaudeSDKClient(
-        options=build_options(session.project, resume=resume, fork=ctx.args.fork)
+        options=build_options(session, resume=resume, fork=ctx.args.fork)
     )
     await asyncio.wait_for(client.connect(), timeout=CLIENT_CONNECT_TIMEOUT)
     session.client = client
@@ -424,6 +546,8 @@ async def run_turn(
 ) -> None:
     async def send(payload: dict[str, Any]) -> None:
         await ws.send_text(json.dumps(payload))
+
+    session.ws = ws  # ensure ask_user routes to this turn's socket
 
     if session.project is None:
         await send({"type": "error", "message": "No project selected for this chat. Pick one first."})
@@ -622,6 +746,7 @@ def build_app() -> FastAPI:
         native = [
             {"name": "Bash", "description": "Built-in shell tool. Denylisted destructive commands are refused; everything else runs with no prompt."},
             {"name": "git_checkpoint", "description": "git add -A && git commit -m <msg> --allow-empty in the active project."},
+            {"name": "ask_user", "description": "Ask the user multiple-choice question(s) in the GUI and wait for their answer."},
         ]
         serena: list[dict[str, str]] = []
         for session in ctx.sessions.values():
@@ -693,6 +818,14 @@ def build_app() -> FastAPI:
 
                 sid = msg.get("session_id", "default")
                 session = ctx.sessions.setdefault(sid, Session(sid=sid))
+                session.ws = ws  # so ask_user can reach the current GUI socket
+
+                if mtype == "ask_response":
+                    qid = msg.get("id")
+                    fut = session.pending_questions.get(qid)
+                    if fut is not None and not fut.done():
+                        fut.set_result(None if msg.get("skipped") else (msg.get("answers") or []))
+                    continue
 
                 if mtype == "set_project":
                     ok, message = await set_session_project(session, Path(msg.get("path", "")))

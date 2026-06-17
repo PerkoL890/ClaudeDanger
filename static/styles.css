@@ -665,3 +665,123 @@ body {
   color: var(--muted);
   font-size: 14px;
 }
+
+/* Ask-the-user question card */
+.ask-card {
+  margin: 8px 0;
+  padding: 12px 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--running-border);
+  border-radius: 10px;
+}
+.ask-card.answered {
+  border-color: var(--border);
+  opacity: 0.9;
+}
+.ask-head {
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.ask-card.answered .ask-head {
+  color: var(--muted);
+  font-weight: 500;
+}
+.ask-q {
+  margin: 10px 0;
+}
+.ask-chip {
+  display: inline-block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: rgba(110, 168, 254, 0.12);
+  border: 1px solid var(--running-border);
+  border-radius: 6px;
+  padding: 1px 7px;
+  margin-bottom: 6px;
+}
+.ask-qtext {
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.ask-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 9px;
+  margin: 4px 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ask-opt:hover {
+  border-color: var(--running-border);
+}
+.ask-opt input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.ask-opt-text {
+  flex: 1;
+}
+.ask-opt-label {
+  font-weight: 500;
+}
+.ask-opt-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.ask-other-input {
+  margin-top: 6px;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.ask-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ask-submit,
+.ask-skip {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ask-submit {
+  background: var(--accent);
+  color: #0b0d12;
+  font-weight: 600;
+}
+.ask-skip {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.ask-skip:hover {
+  color: var(--text);
+}
+.ask-summary-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+.ask-summary-q {
+  color: var(--muted);
+  min-width: 120px;
+}
+.ask-summary-a {
+  color: var(--text);
+  font-weight: 500;
+}

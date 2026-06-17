@@ -93,6 +93,9 @@ function appendThinking(sess, text) {
 }
 
 function addToolCall(sess, id, name) {
+  // ask_user is shown as an interactive question card (see addAsk), not a raw
+  // tool card; its args/result events are ignored on the frontend.
+  if (name === "mcp__local__ask_user") return;
   const a = lastAssistant(sess);
   if (a)
     a.parts.push({
@@ -111,6 +114,30 @@ function findTool(sess, id) {
   const a = lastAssistant(sess);
   if (!a) return null;
   for (const p of a.parts) if (p.kind === "tool" && p.id === id) return p;
+  return null;
+}
+
+function addAsk(sess, id, questions) {
+  const a = lastAssistant(sess);
+  if (!a) return;
+  a.parts.push({
+    kind: "ask",
+    id,
+    questions: questions || [],
+    draft: {}, // qIndex -> { selected: string[], other: string }
+    answered: false,
+    skipped: false,
+    cancelled: false,
+    summary: null, // array of {header, question, answer:[]}
+  });
+}
+
+function findAsk(sess, id) {
+  for (let i = sess.items.length - 1; i >= 0; i--) {
+    const it = sess.items[i];
+    if (it.role !== "assistant") continue;
+    for (const p of it.parts) if (p.kind === "ask" && p.id === id) return p;
+  }
   return null;
 }
 
@@ -217,6 +244,8 @@ function renderAssistant(item) {
       bubble.appendChild(md);
     } else if (part.kind === "tool") {
       bubble.appendChild(renderToolCard(part));
+    } else if (part.kind === "ask") {
+      bubble.appendChild(renderAskCard(part));
     }
   }
 
@@ -276,6 +305,175 @@ function renderToolCard(part) {
   }
   card.appendChild(detail);
   return card;
+}
+
+// --- Ask-the-user question card ------------------------------------------
+
+function renderAskCard(part) {
+  const card = document.createElement("div");
+  card.className = "ask-card" + (part.answered ? " answered" : "");
+
+  if (part.answered) {
+    // Compact read-only summary after the user has responded.
+    const head = document.createElement("div");
+    head.className = "ask-head";
+    head.textContent = part.cancelled
+      ? "Question dismissed"
+      : part.skipped
+        ? "You skipped these questions"
+        : "Your answer";
+    card.appendChild(head);
+    if (!part.cancelled && !part.skipped && part.summary) {
+      for (const a of part.summary) {
+        const row = document.createElement("div");
+        row.className = "ask-summary-row";
+        const q = document.createElement("div");
+        q.className = "ask-summary-q";
+        q.textContent = a.header || a.question || "";
+        const ans = document.createElement("div");
+        ans.className = "ask-summary-a";
+        ans.textContent = (a.answer && a.answer.length ? a.answer.join(", ") : "(no selection)");
+        row.appendChild(q);
+        row.appendChild(ans);
+        card.appendChild(row);
+      }
+    }
+    return card;
+  }
+
+  const title = document.createElement("div");
+  title.className = "ask-head";
+  title.textContent = "Claude is asking you:";
+  card.appendChild(title);
+
+  part.questions.forEach((q, qi) => {
+    const draft = part.draft[qi] || (part.draft[qi] = { selected: [], other: "" });
+    const block = document.createElement("div");
+    block.className = "ask-q";
+
+    if (q.header) {
+      const chip = document.createElement("span");
+      chip.className = "ask-chip";
+      chip.textContent = q.header;
+      block.appendChild(chip);
+    }
+    const qtext = document.createElement("div");
+    qtext.className = "ask-qtext";
+    qtext.textContent = q.question || "";
+    block.appendChild(qtext);
+
+    const multi = !!q.multiSelect;
+    const inputType = multi ? "checkbox" : "radio";
+    const groupName = `ask-${part.id}-${qi}`;
+
+    const makeOption = (value, labelText, descText, isOther) => {
+      const opt = document.createElement("label");
+      opt.className = "ask-opt";
+      const inp = document.createElement("input");
+      inp.type = inputType;
+      inp.name = groupName;
+      inp.value = value;
+      inp.checked = draft.selected.includes(value);
+      inp.addEventListener("change", () => {
+        if (multi) {
+          if (inp.checked) {
+            if (!draft.selected.includes(value)) draft.selected.push(value);
+          } else {
+            draft.selected = draft.selected.filter((v) => v !== value);
+          }
+        } else {
+          draft.selected = inp.checked ? [value] : [];
+        }
+      });
+      const txt = document.createElement("div");
+      txt.className = "ask-opt-text";
+      const lab = document.createElement("div");
+      lab.className = "ask-opt-label";
+      lab.textContent = labelText;
+      txt.appendChild(lab);
+      if (descText) {
+        const d = document.createElement("div");
+        d.className = "ask-opt-desc";
+        d.textContent = descText;
+        txt.appendChild(d);
+      }
+      opt.appendChild(inp);
+      opt.appendChild(txt);
+      if (isOther) {
+        const other = document.createElement("input");
+        other.type = "text";
+        other.className = "ask-other-input";
+        other.placeholder = "type your own answer…";
+        other.value = draft.other || "";
+        other.addEventListener("input", () => {
+          draft.other = other.value;
+        });
+        // Selecting the text field implies the Other option is chosen.
+        other.addEventListener("focus", () => {
+          inp.checked = true;
+          inp.dispatchEvent(new Event("change"));
+        });
+        txt.appendChild(other);
+      }
+      return opt;
+    };
+
+    (q.options || []).forEach((o) => {
+      block.appendChild(makeOption(o.label, o.label, o.description, false));
+    });
+    block.appendChild(makeOption("__other__", "Other", "", true));
+
+    card.appendChild(block);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "ask-actions";
+  const submit = document.createElement("button");
+  submit.className = "ask-submit";
+  submit.textContent = "Submit";
+  submit.addEventListener("click", () => answerAsk(part, false));
+  const skip = document.createElement("button");
+  skip.className = "ask-skip";
+  skip.textContent = "Skip";
+  skip.addEventListener("click", () => answerAsk(part, true));
+  actions.appendChild(submit);
+  actions.appendChild(skip);
+  card.appendChild(actions);
+
+  return card;
+}
+
+function answerAsk(part, skipped) {
+  if (part.answered || !wsReady) return;
+  const sess = current();
+  if (!sess) return;
+
+  let answers = null;
+  if (!skipped) {
+    answers = part.questions.map((q, qi) => {
+      const d = part.draft[qi] || { selected: [], other: "" };
+      const labels = d.selected.filter((v) => v !== "__other__");
+      if (d.selected.includes("__other__") && (d.other || "").trim()) {
+        labels.push(d.other.trim());
+      }
+      return { header: q.header, question: q.question, answer: labels };
+    });
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "ask_response",
+      session_id: sess.id,
+      id: part.id,
+      answers: answers || [],
+      skipped: !!skipped,
+    })
+  );
+
+  part.answered = true;
+  part.skipped = !!skipped;
+  part.summary = answers;
+  scheduleRender();
 }
 
 function labeled(label, text) {
@@ -451,6 +649,17 @@ function handle(msg) {
       if (t) {
         t.status = msg.status;
         t.result = msg.result;
+      }
+      break;
+    }
+    case "ask_question":
+      addAsk(sess, msg.id, msg.questions);
+      break;
+    case "ask_cancel": {
+      const p = findAsk(sess, msg.id);
+      if (p && !p.answered) {
+        p.answered = true;
+        p.cancelled = true;
       }
       break;
     }
